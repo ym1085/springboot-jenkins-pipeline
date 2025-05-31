@@ -7,6 +7,7 @@ plugins {
 group = 'com.jenkins'
 version = '0.0.1-SNAPSHOT'
 
+// Gradle이 빌드에 사용할 Java 버전을 강제하는 옵션
 java {
 	toolchain {
 		languageVersion = JavaLanguageVersion.of(17)
