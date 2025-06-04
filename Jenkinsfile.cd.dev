@@ -1,0 +1,70 @@
+pipeline {
+    // 파이프라인을 어떤 노드에서 실행할지 결정
+    agent any
+    
+    // 파이프라인 실행을 위한 매개변수 추가
+    parameters {
+        string(name: 'AWS_REGION', defaultValue: 'ap-northeast-2', description: 'AWS Region')
+        string(name: 'AWS_ACCOUNT_ID', defaultValue: '744444444444', description: 'AWS Account ID')
+        string(name: 'IMAGE_TAG', defaultValue: 'latest', description: 'ECR 이미지 태그')
+        choice(name: 'PROFILE', choices: ['stg', 'prod'], description: '배포 환경')
+    }
+
+    /*
+        환경 변수 지정
+        -> 1개의 Task에 N개의 Container가 구동되는 경우도 존재하기에, 고려해서 구성 해야 함
+        -> 예: filebeat, api container 2개가 1개의 Task에 구동되는 경우
+    */
+    environment {
+        AWS_REGION = "${params.AWS_REGION}"
+        AWS_ACCOUNT_ID = "${params.AWS_ACCOUNT_ID}"
+        ECS_CLUSTER_NAME = "search-ecs-cluster-${params.PROFILE}"
+        ECS_SERVICE_NAME = "search-opensearch-ecs-service-${params.PROFILE}"
+        ECS_TASK_FAMILY = "search-opensearch-api-td-${params.PROFILE}"
+        OPENSEARCH_API_CONTAINER_NME = "search-opensearch-api-${params.PROFILE}"
+        OPENSEARCH_API_ECR_REPO = "search-opensearch-api-${params.PROFILE}"
+        OPENSEARCH_API_IMAGE_URI = "${params.AWS_ACCOUNT_ID}.dkr.ecr.${params.AWS_REGION}.amazonaws.com/${OPENSEARCH_API_ECR_REPO}:${params.IMAGE_TAG}"
+    }
+
+    stages {
+        // Print Parameters
+        stage("Debug") {
+            steps {
+                echo "================================================"
+                echo "> Check Environment Variables"
+                echo "AWS_REGION: ${params.AWS_REGION}"
+                echo "AWS_ACCOUNT_ID: ${params.AWS_ACCOUNT_ID}"
+                echo "ECS_CLUSTER_NAME: ${ECS_CLUSTER_NAME}"
+                echo "ECS_SERVICE_NAME: ${ECS_SERVICE_NAME}"
+                echo "ECS_TASK_FAMILY: ${ECS_TASK_FAMILY}"
+                echo "OPENSEARCH_API_CONTAINER_NME: ${OPENSEARCH_API_CONTAINER_NME}"
+                echo "OPENSEARCH_API_ECR_REPO: ${OPENSEARCH_API_ECR_REPO}"
+                echo "OPENSEARCH_API_IMAGE_URI: ${OPENSEARCH_API_IMAGE_URI}"
+                echo "PROFILE: ${params.PROFILE}"
+                echo "================================================"
+            }
+        }
+
+        // ECS Task Definition 신규 생성
+        stage("Register ECS Task Definition") {
+            steps {
+                script {
+                    sh """
+                    # 기존 Task Definition 파일 조회
+                    aws ecs describe-task-definition \
+                        --task-definition ${ECS_TASK_FAMILY} \
+                        --query 'taskDefinition.containerDefinitions' \
+                        --output json > task-definition.json
+                    
+                    # 이미지 URI 변경 : https://eyeballs.tistory.com/469
+                    # sed -i : 기존 파일의 내용을 치환하고, 새 파일을 만들지 않음
+                    # TODO: SED 명령어 자세히 분석
+                    sed -i 's/image.*/image": "${OPENSEARCH_API_IMAGE_URI}",/' task-definition.json
+
+                    # TODO: ECS Task 등록 후 ECS Deploy 진행 필요
+                    """
+                }
+            }
+        }
+    }
+}

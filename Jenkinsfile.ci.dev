@@ -1,6 +1,14 @@
 pipeline {
     // 파이프라인을 어떤 노드에서 실행할지 결정
     agent any
+
+    // Jenkinsfile에서 관리되는 매개변수 -> 버전관리 가능
+    parameters {
+        string(name: 'AWS_REGION', defaultValue: 'ap-northeast-2', description: 'AWS Region')
+        string(name: 'AWS_ACCOUNT_ID', defaultValue: '842675972665', description: 'AWS Account ID')
+        string(name: 'DOCKER_IMAGE_TAG', defaultValue: 'latest', description: 'ECR 태그')
+        choice(name: 'PROFILE', choices: ['stg', 'prod'], description: '배포 환경')
+    }
     
     tools {
         jdk "amazon-corretor-jdk17"
@@ -8,29 +16,26 @@ pipeline {
     
     // 환경 변수
     environment {
-        PROFILE = "${PROFILE}" // 프로파일(prod, stg)
-        AWS_REGION = "ap-northeast-2" // AWS Region 정보
-        AWS_ACCOUNT_ID = "842675972665" // AWS Acocunt 정보
-        AWS_ECR_REPOSITORY = "search-jenkins-pipeline-${PROFILE}" // AWS ECR Repository 정보
-        AWS_ECR_URL = "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${AWS_ECR_REPOSITORY}" // AWS ECR URL
-        DOCKER_IMAGE_TAG = "${env.BUILD_NUMBER}" // Docker Image Tag
-        DOCKER_IMAGE = "${AWS_ECR_URL}:${DOCKER_IMAGE_TAG}" // Docker Image
+        AWS_REGION = "${params.AWS_REGION}"
+        AWS_ACCOUNT_ID = "${params.AWS_ACCOUNT_ID}"
+        AWS_ECR_REPOSITORY = "search-opensearch-api-${params.PROFILE}"
+        AWS_ECR_URL = "${params.AWS_ACCOUNT_ID}.dkr.ecr.${params.AWS_REGION}.amazonaws.com/${AWS_ECR_REPOSITORY}"
+        DOCKER_IMAGE = "${AWS_ECR_URL}:${params.DOCKER_IMAGE_TAG}"
     }
 
-    // 파이프라인의 단계
     stages {
-        // 디버깅
+        // Print Parameters
         stage("Debug") {
             steps {
                 echo "================================================"
                 echo "> Check Environment Variables"
-                echo "AWS_REGION: ${AWS_REGION}"
-                echo "AWS_ACCOUNT_ID: ${AWS_ACCOUNT_ID}"
+                echo "AWS_REGION: ${params.AWS_REGION}"
+                echo "AWS_ACCOUNT_ID: ${params.AWS_ACCOUNT_ID}"
                 echo "AWS_ECR_REPOSITORY: ${AWS_ECR_REPOSITORY}"
                 echo "AWS_ECR_URL: ${AWS_ECR_URL}"
-                echo "DOCKER_IMAGE_TAG: ${DOCKER_IMAGE_TAG}"
+                echo "DOCKER_IMAGE_TAG: ${params.DOCKER_IMAGE_TAG}"
                 echo "DOCKER_IMAGE: ${DOCKER_IMAGE}"
-                echo "PROFILE: ${PROFILE}"
+                echo "PROFILE: ${params.PROFILE}"
                 echo "================================================"
                 echo "> Check Java Version"
                 sh "java --version"
