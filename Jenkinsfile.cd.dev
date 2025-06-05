@@ -10,6 +10,10 @@ pipeline {
         choice(name: 'PROFILE', choices: ['stg', 'prod'], description: '배포 환경')
     }
 
+    tools {
+        jdk "amazon-corretor-jdk17"
+    }
+
     /*
         환경 변수 지정
         -> 1개의 Task에 N개의 Container가 구동되는 경우도 존재하기에, 고려해서 구성 해야 함
@@ -34,13 +38,13 @@ pipeline {
                 echo "> Check Environment Variables"
                 echo "AWS_REGION: ${params.AWS_REGION}"
                 echo "AWS_ACCOUNT_ID: ${params.AWS_ACCOUNT_ID}"
+                echo "PROFILE: ${params.PROFILE}"
                 echo "ECS_CLUSTER_NAME: ${ECS_CLUSTER_NAME}"
                 echo "ECS_SERVICE_NAME: ${ECS_SERVICE_NAME}"
                 echo "ECS_TASK_FAMILY: ${ECS_TASK_FAMILY}"
                 echo "OPENSEARCH_API_CONTAINER_NME: ${OPENSEARCH_API_CONTAINER_NME}"
                 echo "OPENSEARCH_API_ECR_REPO: ${OPENSEARCH_API_ECR_REPO}"
                 echo "OPENSEARCH_API_IMAGE_URI: ${OPENSEARCH_API_IMAGE_URI}"
-                echo "PROFILE: ${params.PROFILE}"
                 echo "================================================"
             }
         }
@@ -49,19 +53,63 @@ pipeline {
         stage("Register ECS Task Definition") {
             steps {
                 script {
+                    // 기존 Task Definition 파일 조회
                     sh """
-                    # 기존 Task Definition 파일 조회
+                    echo "기존 Task Definition 파일 조회"
                     aws ecs describe-task-definition \
-                        --task-definition ${ECS_TASK_FAMILY} \
+                        --task-definition ${ECS_TASK_FAMILY}-${params.PROFILE} \
                         --query 'taskDefinition.containerDefinitions' \
                         --output json > task-definition.json
-                    
-                    # 이미지 URI 변경 : https://eyeballs.tistory.com/469
-                    # sed -i : 기존 파일의 내용을 치환하고, 새 파일을 만들지 않음
-                    # TODO: SED 명령어 자세히 분석
-                    sed -i 's/image.*/image": "${OPENSEARCH_API_IMAGE_URI}",/' task-definition.json
+                    """
 
-                    # TODO: ECS Task 등록 후 ECS Deploy 진행 필요
+                    // 기존 Image 필드를 새로운 이미지 URI로 치환
+                    sh """
+                    echo "Task Definition 파일 수정"
+                    sed -i 's|"image":.*|"image": "${OPENSEARCH_API_IMAGE_URI}",|' task-definition.json
+                    echo "${task-definition.json}"
+                    """
+
+                    // Task Definition 등록
+                    sh """
+                    echo "Task Definition 등록"
+                    aws ecs register-task-definition \
+                        --family ${ECS_TASK_FAMILY}-${params.PROFILE} \
+                        --execution-role-arn arn:aws:iam::${params.AWS_ACCOUNT_ID}:role/ecsTaskExecutionRole \
+                        --network-mode awsvpc \
+                        --requires-compatibilities FARGATE \
+                        --cpu "512" \
+                        --memory "1024" \
+                        --container-definitions file://task-definition.json
+                    """
+                }
+            }
+        }
+
+        // ECS Service 배포
+        stage("Deploy ECS Service") {
+            steps {
+                script {
+                    def latestRevision = sh(
+                        script: """
+                        aws ecs describe-task-definition \
+                        --task-definition ${ECS_TASK_FAMILY}-${params.PROFILE} \
+                        --query 'taskDefinition.revision' \
+                        --output text
+                        """,
+                        returnStdout: true // 출력 여부 지정
+                    ).trim()
+
+                    echo "최신 Task 리비전: ${latestRevision}"
+
+                    // ECS 서비스 업데이트 (배포)
+                    sh """
+                    echo "ECS 서비스 업데이트"
+                    aws ecs update-service \
+                        --cluster ${ECS_CLUSTER_NAME}-${params.PROFILE} \
+                        --service ${ECS_SERVICE_NAME}-${params.PROFILE} \
+                        --task-definition ${ECS_TASK_FAMILY}-${params.PROFILE}:${latestRevision} \
+                        --region ${params.AWS_REGION} \
+                        --force-new-deployment
                     """
                 }
             }
