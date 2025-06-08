@@ -5,7 +5,7 @@ pipeline {
     // 파이프라인 실행을 위한 매개변수 추가
     parameters {
         string(name: 'AWS_REGION', defaultValue: 'ap-northeast-2', description: 'AWS Region')
-        string(name: 'AWS_ACCOUNT_ID', defaultValue: '744444444444', description: 'AWS Account ID')
+        string(name: 'AWS_ACCOUNT_ID', defaultValue: '842675972665', description: 'AWS Account ID')
         string(name: 'IMAGE_TAG', defaultValue: 'latest', description: 'ECR 이미지 태그')
         choice(name: 'PROFILE', choices: ['stg', 'prod'], description: '배포 환경')
     }
@@ -25,6 +25,7 @@ pipeline {
         ECS_CLUSTER_NAME = "search-ecs-cluster-${params.PROFILE}"
         ECS_SERVICE_NAME = "search-opensearch-ecs-service-${params.PROFILE}"
         ECS_TASK_FAMILY = "search-opensearch-api-td-${params.PROFILE}"
+        ECS_DESIRED_COUNT = "1"
         OPENSEARCH_API_CONTAINER_NME = "search-opensearch-api-${params.PROFILE}"
         OPENSEARCH_API_ECR_REPO = "search-opensearch-api-${params.PROFILE}"
         OPENSEARCH_API_IMAGE_URI = "${params.AWS_ACCOUNT_ID}.dkr.ecr.${params.AWS_REGION}.amazonaws.com/${OPENSEARCH_API_ECR_REPO}:${params.IMAGE_TAG}"
@@ -57,7 +58,7 @@ pipeline {
                     sh """
                     echo "기존 Task Definition 파일 조회"
                     aws ecs describe-task-definition \
-                        --task-definition ${ECS_TASK_FAMILY}-${params.PROFILE} \
+                        --task-definition ${ECS_TASK_FAMILY} \
                         --query 'taskDefinition.containerDefinitions' \
                         --output json > task-definition.json
                     """
@@ -66,14 +67,13 @@ pipeline {
                     sh """
                     echo "Task Definition 파일 수정"
                     sed -i 's|"image":.*|"image": "${OPENSEARCH_API_IMAGE_URI}",|' task-definition.json
-                    echo "${task-definition.json}"
                     """
 
                     // Task Definition 등록
                     sh """
                     echo "Task Definition 등록"
                     aws ecs register-task-definition \
-                        --family ${ECS_TASK_FAMILY}-${params.PROFILE} \
+                        --family ${ECS_TASK_FAMILY} \
                         --execution-role-arn arn:aws:iam::${params.AWS_ACCOUNT_ID}:role/ecsTaskExecutionRole \
                         --network-mode awsvpc \
                         --requires-compatibilities FARGATE \
@@ -89,10 +89,12 @@ pipeline {
         stage("Deploy ECS Service") {
             steps {
                 script {
+                    sleep time: 10, unit: 'SECONDS' // 10초 대기
+
                     def latestRevision = sh(
                         script: """
                         aws ecs describe-task-definition \
-                        --task-definition ${ECS_TASK_FAMILY}-${params.PROFILE} \
+                        --task-definition ${ECS_TASK_FAMILY} \
                         --query 'taskDefinition.revision' \
                         --output text
                         """,
@@ -105,9 +107,10 @@ pipeline {
                     sh """
                     echo "ECS 서비스 업데이트"
                     aws ecs update-service \
-                        --cluster ${ECS_CLUSTER_NAME}-${params.PROFILE} \
-                        --service ${ECS_SERVICE_NAME}-${params.PROFILE} \
-                        --task-definition ${ECS_TASK_FAMILY}-${params.PROFILE}:${latestRevision} \
+                        --cluster ${ECS_CLUSTER_NAME} \
+                        --service ${ECS_SERVICE_NAME} \
+                        --desired-count ${ECS_DESIRED_COUNT} \
+                        --task-definition ${ECS_TASK_FAMILY}:${latestRevision} \
                         --region ${params.AWS_REGION} \
                         --force-new-deployment
                     """
